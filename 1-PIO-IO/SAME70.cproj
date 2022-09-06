@@ -33,9 +33,10 @@
     <option id="common.services.basic.clock" value="Add" config="" content-id="Atmel.ASF" />
     <option id="common.services.delay" value="Add" config="" content-id="Atmel.ASF" />
     <option id="common.services.basic.gpio" value="Add" config="" content-id="Atmel.ASF" />
+    <option id="common.services.ioport" value="Add" config="" content-id="Atmel.ASF" />
     <option id="sam.drivers.mpu" value="Add" config="" content-id="Atmel.ASF" />
     <option id="sam.drivers.pio" value="Add" config="" content-id="Atmel.ASF" />
-    <option id="common.services.ioport" value="Add" config="" content-id="Atmel.ASF" />
+    <option id="sam.drivers.pmc" value="Add" config="" content-id="Atmel.ASF" />
     <option id="sam.applications.same70_xplained_demo" value="Add" config="" content-id="Atmel.ASF" />
     <option id="sam.utils.cmsis.same70.source.template" value="Add" config="" content-id="Atmel.ASF" />
   </options>
