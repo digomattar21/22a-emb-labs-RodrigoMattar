@@ -107,22 +107,18 @@ int main (void)
 	sysclk_init();
 	delay_init();
 	io_init();
-	gfx_mono_ssd1306_init();
 	
-	int freq = 200;
-	char freqChar[128];
+	int frequencia = 200;
 	int j = 30;
 	
 	while(1) {
 		
 		if (but_flag) {
 			delay_ms(1000);
-			(but_flag)?(freq+=100):(freq-=100);
-			sprintf(freqChar, "freq %d", freq);
-			gfx_mono_draw_string(freqChar, 0, 0, &sysfont);
+			(but_flag)?(frequencia+=100):(frequencia-=100);
 			j = 30;
 			while(!but2_flag && j >=0){
-				pisca_led(1,freq);
+				pisca_led(1,frequencia);
 				j -= 1;
 			}
 		}
