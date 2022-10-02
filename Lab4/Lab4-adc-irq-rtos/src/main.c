@@ -16,11 +16,8 @@
 /* RTOS                                                                */
 /************************************************************************/
 
-#define TASK_ADC_STACK_SIZE (1024*10 / sizeof(portSTACK_TYPE))
+#define TASK_ADC_STACK_SIZE (1024 * 10 / sizeof(portSTACK_TYPE))
 #define TASK_ADC_STACK_PRIORITY (tskIDLE_PRIORITY)
-
-#define TASK_PROC_STACK_SIZE (1024*10 / sizeof(portSTACK_TYPE))
-#define TASK_PROC_STACK_PRIORITY (tskIDLE_PRIORITY)
 
 extern void vApplicationStackOverflowHook(xTaskHandle *pxTask,
                                           signed char *pcTaskName);
@@ -33,9 +30,12 @@ extern void xPortSysTickHandler(void);
 /* recursos RTOS                                                        */
 /************************************************************************/
 
+TimerHandle_t xTimer;
+
 /** Queue for msg log send data */
 QueueHandle_t xQueueADC;
-QueueHandle_t xQueuePROC;
+
+QueueHandle_t xQueueProc;
 
 typedef struct {
   uint value;
@@ -46,9 +46,10 @@ typedef struct {
 /************************************************************************/
 
 static void USART1_init(void);
-void TC_init(Tc *TC, int ID_TC, int TC_CHANNEL, int freq);
-static void config_AFEC_pot(Afec *afec, uint32_t afec_id, uint32_t afec_channel, afec_callback_t callback);
+static void config_AFEC_pot(Afec *afec, uint32_t afec_id, uint32_t afec_channel,
+                            afec_callback_t callback);
 static void configure_console(void);
+void TC_init(Tc *TC, int ID_TC, int TC_CHANNEL, int freq);
 
 /************************************************************************/
 /* RTOS application funcs                                               */
@@ -84,66 +85,99 @@ extern void vApplicationMallocFailedHook(void) {
 /************************************************************************/
 
 void TC1_Handler(void) {
-  volatile uint32_t ul_dummy;
+	volatile uint32_t ul_dummy;
 
-  ul_dummy = tc_get_status(TC0, 1);
+	ul_dummy = tc_get_status(TC0, 1);
 
-  /* Avoid compiler warning */
-  UNUSED(ul_dummy);
+	/* Avoid compiler warning */
+	UNUSED(ul_dummy);
 
-  /* Selecina canal e inicializa conversão */
-  afec_channel_enable(AFEC_POT, AFEC_POT_CHANNEL);
-  afec_start_software_conversion(AFEC_POT);
+	/* Selecina canal e inicializa conversão */
+	afec_channel_enable(AFEC_POT, AFEC_POT_CHANNEL);
+	afec_start_software_conversion(AFEC_POT);
 }
 
-static void AFEC_pot_Callback(void) {
+static void AFEC_pot_callback(void) {
   adcData adc;
   adc.value = afec_channel_get_value(AFEC_POT, AFEC_POT_CHANNEL);
   BaseType_t xHigherPriorityTaskWoken = pdTRUE;
-  xQueueSendFromISR(xQueuePROC, &adc, &xHigherPriorityTaskWoken);
+  xQueueSendFromISR(xQueueProc, &adc, &xHigherPriorityTaskWoken);
 }
 
 /************************************************************************/
 /* TASKS                                                                */
 /************************************************************************/
 
-static void task_adc(void *pvParameters) {
-	int avg;
-	while (1) {
-		if (xQueueReceive(xQueueADC, &avg, 1000)) {
-			printf("Avg: %d \n", avg);
-		}
-	}
+void vTimerCallback(TimerHandle_t xTimer) {
+  /* Selecina canal e inicializa conversão */
+  afec_channel_enable(AFEC_POT, AFEC_POT_CHANNEL);
+  afec_start_software_conversion(AFEC_POT);
+}
+
+static void task_proc(void *pvParameters) {
+	// configura ADC e TC para controlar a leitura
+	config_AFEC_pot(AFEC_POT, AFEC_POT_ID, AFEC_POT_CHANNEL, AFEC_pot_callback);
+	TC_init(TC0, ID_TC1, 1, 10);
+	tc_start(TC0, 1);
+	adcData adc;
+	int i = 0;
+	int vect[] = {0,0,0,0,0,0,0,0,0,0};
+	int s;
+	int m;
+  
+  while (1) {
+	  
+	  //Recebe os dados do ADC (xQueueProc), calcula a media e envia para a xQueueADC para printar no terminal
+	  if (xQueueReceive(xQueueProc, &(adc), 1000)) {
+		  printf("Valor ADC: %d \n", adc);
+		  //Reseta contador caso o vetor esteja cheio
+		  if(i==9){
+			  i=0;
+		  }
+		  //Atribui valor do adc ao vetor na posicao do contador
+		  vect[i] = adc.value;
+		  //Aumenta o contador em 1
+		  i++;
+		  //Zera a soma dos elementos do vetor
+		  s = 0;
+		  //percorre vetor e soma os dados
+		  for (int j =0;j<10;j++){
+			  s+=vect[j];
+		  };
+		  //calcula media dividindo valor da soma do vetor pelo tamanho do vetor
+		  m=s/10;
+		  //Envia dados para a fila
+		  xQueueSend(xQueueADC, (void *)&m, 10);
+		  } else {
+		  printf("Nao chegou um novo dado em 1 segundo");
+	  }
+  }
+	
+	
 }
 
 
-static void task_proc(void *pvParameters) {
-  config_AFEC_pot(AFEC_POT, AFEC_POT_ID, AFEC_POT_CHANNEL, AFEC_pot_Callback);
-  TC_init(TC0, ID_TC1, 1, 10);
-  tc_start(TC0, 1);
-  
+static void task_adc(void *pvParameters) {
+
+  // variável para recever dados da fila
   adcData adc;
-	int counter = 0;
-	int total = 0;
 
   while (1) {
-    if (xQueueReceive(xQueuePROC, &(adc), 1000)) {
-			if(counter > 9) {
-				int avg = total/counter;
-				xQueueSend(xQueueADC, &avg, 10);
-				counter = 0;
-				total = 0;
-			}
-			total += adc.value;
-			counter++;
+    if (xQueueReceive(xQueueADC, &(adc), 1000)) {
+      printf("Media: %d \n", adc);
     } else {
       printf("Nao chegou um novo dado em 1 segundo");
     }
   }
 }
 
+/************************************************************************/
+/* funcoes                                                              */
+/************************************************************************/
 
-
+/**
+ * \brief Configure the console UART.
+ */
 static void configure_console(void) {
   const usart_serial_options_t uart_serial_options = {
       .baudrate = CONF_UART_BAUDRATE,
@@ -204,26 +238,24 @@ static void config_AFEC_pot(Afec *afec, uint32_t afec_id, uint32_t afec_channel,
   NVIC_EnableIRQ(afec_id);
 }
 
-void TC_init(Tc *TC, int ID_TC, int TC_CHANNEL, int freq) {
-  uint32_t ul_div;
-  uint32_t ul_tcclks;
-  uint32_t ul_sysclk = sysclk_get_cpu_hz();
-
-  pmc_enable_periph_clk(ID_TC);
-
-  tc_find_mck_divisor(freq, ul_sysclk, &ul_div, &ul_tcclks, ul_sysclk);
-  tc_init(TC, TC_CHANNEL, ul_tcclks | TC_CMR_CPCTRG);
-  tc_write_rc(TC, TC_CHANNEL, (ul_sysclk / ul_div) / freq);
-
-  NVIC_SetPriority((IRQn_Type)ID_TC, 4);
-  NVIC_EnableIRQ((IRQn_Type)ID_TC);
-  tc_enable_interrupt(TC, TC_CHANNEL, TC_IER_CPCS);
-}
-
 /************************************************************************/
 /* main                                                                 */
 /************************************************************************/
+void TC_init(Tc *TC, int ID_TC, int TC_CHANNEL, int freq) {
+	uint32_t ul_div;
+	uint32_t ul_tcclks;
+	uint32_t ul_sysclk = sysclk_get_cpu_hz();
 
+	pmc_enable_periph_clk(ID_TC);
+
+	tc_find_mck_divisor(freq, ul_sysclk, &ul_div, &ul_tcclks, ul_sysclk);
+	tc_init(TC, TC_CHANNEL, ul_tcclks | TC_CMR_CPCTRG);
+	tc_write_rc(TC, TC_CHANNEL, (ul_sysclk / ul_div) / freq);
+
+	NVIC_SetPriority((IRQn_Type)ID_TC, 4);
+	NVIC_EnableIRQ((IRQn_Type)ID_TC);
+	tc_enable_interrupt(TC, TC_CHANNEL, TC_IER_CPCS);
+}
 /**
  *  \brief FreeRTOS Real Time Kernel example entry point.
  *
@@ -237,24 +269,24 @@ int main(void) {
   xQueueADC = xQueueCreate(100, sizeof(adcData));
   if (xQueueADC == NULL)
     printf("falha em criar a queue xQueueADC \n");
-		
-	xQueuePROC = xQueueCreate(100, sizeof(adcData));
-	if (xQueuePROC == NULL)
-		printf("falha em criar a queue xQueuePROC \n");
+	
+	xQueueProc = xQueueCreate(100, sizeof(adcData));
+	if (xQueueProc == NULL)
+	printf("falha em criar a queue xQueueADC \n");
 
   if (xTaskCreate(task_adc, "ADC", TASK_ADC_STACK_SIZE, NULL,
                   TASK_ADC_STACK_PRIORITY, NULL) != pdPASS) {
     printf("Failed to create test ADC task\r\n");
   }
-	
-	 if (xTaskCreate(task_proc, "PROC", TASK_PROC_STACK_SIZE, NULL,
-	  TASK_PROC_STACK_PRIORITY, NULL) != pdPASS) {
-		  printf("Failed to create test PROC task\r\n");
-	  }
+  if (xTaskCreate(task_proc, "ADC", TASK_ADC_STACK_SIZE, NULL,
+  TASK_ADC_STACK_PRIORITY, NULL) != pdPASS) {
+	  printf("Failed to create test PROC task\r\n");
+  }
 
   vTaskStartScheduler();
 
-  while (1) {  }
+  while (1) {
+  }
 
   /* Will only get here if there was insufficient memory to create the idle
    * task. */
